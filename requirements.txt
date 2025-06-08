@@ -11,3 +11,6 @@ torch>=2.1.0
 plotly>=5.17.0
 pandas>=2.1.0
 requests>=2.31.0
+langchain-community>=0.0.350
+pypdf>=5.6.0
+sarvamai>=0.1.5
