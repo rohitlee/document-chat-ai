@@ -1,55 +1,84 @@
-from typing import List, Dict
-import openai
-from transformers import pipeline
+# components/response_generator.py
+
+import requests
+import os
+import streamlit as st
+from .nlp_processor import NLPProcessor
+
+# Using the Mixtral model as it's a great, non-gated alternative for testing
+API_URL = "https://api-inference.huggingface.co/models/mistralai/Mixtral-8x7B-Instruct-v0.1"
 
 class ResponseGenerator:
     def __init__(self):
-        self.summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+        try:
+            hf_token = st.secrets["HF_TOKEN"]
+            self.headers = {"Authorization": f"Bearer {hf_token}"}
+        except (FileNotFoundError, KeyError):
+            self.headers = {}
+            st.error("Hugging Face token not found. Please add HF_TOKEN to your secrets.")
+            st.stop()
     
-    def generate_response(self, query: str, retrieved_docs: List[Dict], language: str = 'en') -> str:
-        """Generate response based on retrieved documents"""
+    def generate_response(self, query: str, retrieved_docs: list, nlp_processor: NLPProcessor, target_language: str = 'en-IN') -> str:
         context = self._create_context(retrieved_docs)
-        response = self._generate_contextual_response(query, context)
+        
+        if not self.headers.get("Authorization"):
+            return "Cannot generate response because Hugging Face API token is missing."
 
-        if language != 'en':
-            response = self._translate_response(response, language)
-        return response
+        english_response = self._generate_with_hf_api(query, context)
+
+        if target_language != 'en-IN' and english_response:
+            return nlp_processor.translate_text(english_response, source_lang='en-IN', target_lang=target_language)
+        
+        return english_response or "I could not generate a response based on the provided documents."
     
-    def _create_context(self, docs: List[Dict], max_length: int = 2000) -> str:
-        """Create context from retrieved documents"""
+    def _create_context(self, docs: list, max_length: int = 4000) -> str:
         context_parts = []
         current_length = 0
         for doc in docs:
-            content = doc['content']
+            content = doc.get('content', '')
             if current_length + len(content) > max_length:
                 break
-            context_parts.append(content)
+            source = doc.get('metadata', {}).get('source', 'Unknown')
+            context_parts.append(f"Source: {os.path.basename(source)}\nContent: {content}\n---")
             current_length += len(content)
         return "\n".join(context_parts)
 
-    def _generate_contextual_response(self, query: str, context: str) -> str:
-        """Generate response using context"""
-        prompt = f"""
-        Based on the following context, answer the user's question accurately and concisely.
-
-        Context: {context}
-
-        Question: {query}
-
-        Answer:
-        """
-        if len(context) > 500:
-            summary = self.summarizer(context, max_length=200, min_length=50)
-            context = summary[0]['summary_text']
-        sentences = context.split('.')
-        relevant_sentences = [s for s in sentences if any(word in s.lower() for word in query.lower().split())]
-
-        if relevant_sentences:
-            return " ".join(relevant_sentences[:3]) + "."
-        else:
-            return "I found some relevant information, but couldn't extract a specific answer."
+    def _generate_with_hf_api(self, query: str, context: str) -> str:
+        """Generate response using the Hugging Face Inference API with the correct prompt format."""
         
-    def _translate_response(self, response: str, target_language: str) -> str:
-        """Translate response to target language"""
-        return response
+        # === THIS IS THE CORRECT PROMPT FORMAT FOR MISTRAL INSTRUCT MODELS ===
+        system_prompt = "You are a helpful AI assistant. Answer the user's question based *only* on the provided context. If the context does not contain the answer, state that you could not find the information in the documents. Be concise."
+        user_prompt = f"""CONTEXT:
+        {context}
+
+        QUESTION: {query}"""
+
+        prompt = f"<s>[INST] {system_prompt} \n\n{user_prompt} [/INST]"
+        # =====================================================================
+
+        payload = {
+            "inputs": prompt,
+            "parameters": {
+                "max_new_tokens": 350,
+                "temperature": 0.3,
+                "return_full_text": False,
+            }
+        }
         
+        try:
+            response = requests.post(API_URL, headers=self.headers, json=payload, timeout=60)
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result[0]['generated_text'].strip()
+            elif response.status_code == 503:
+                st.toast("Model is loading, please wait a moment and try again...", icon="⏳")
+                return "The AI model is currently loading. This can take up to a minute. Please ask your question again shortly."
+            else:
+                error_message = f"Hugging Face API Error: {response.status_code} - {response.text}"
+                print(error_message) # This will print the exact error to your terminal
+                return "I encountered an error while trying to reach the AI model. Please check the terminal logs."
+
+        except requests.exceptions.RequestException as e:
+            print(f"Error calling Hugging Face API: {e}")
+            return "I could not connect to the Hugging Face Inference API. Please check your internet connection."
