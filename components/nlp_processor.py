@@ -1,39 +1,38 @@
-import spacy
-from transformers import pipeline
-import requests
+import streamlit as st
+from sarvamai import SarvamAI
 
 class NLPProcessor:
     def __init__(self):
-        self.nlp = spacy.load("en_core_web_sm")
-        self.intent_classifier = pipeline("text-classification", model="microsoft/DialoGPT-medium")
-        self.sarvam_api_key = "Your_Sarvam_API_Key"  # Replace with your Sarvam API key
+        """Initializes the NLP Processor using the official SarvamAI SDK."""
+        try:
+            self.client = SarvamAI(api_subscription_key=st.secrets["SARVAM_API_KEY"])
+        except Exception as e:
+            self.client = None
+            st.error(f"Failed to initialize Sarvam AI client: {e}")
 
-    def detect_language(self, text: str) -> str:
-        """Detect language using Sarvam AI"""
-        headers = {
-            'Authorization': f'Bearer {self.sarvam_api_key}',
-            'Content-Type': 'application/json'
-        }
-
-        response = requests.post('https://api.sarvam.ai/v1/detect_language', headers=headers, json={'text': text})
-        return response.json().get('language', 'en')
-    
-    def translate_text(self, text: str, target_lang: str) -> str:
-        """Translate text using Sarvam AI"""
-        if target_lang == 'en':
+    def translate_text(self, text: str, target_lang: str, source_lang: str = "auto") -> str:
+        """
+        Translate text using the official Sarvam AI SDK.
+        """
+        if not self.client or not text or not text.strip():
             return text
-        
-        headers = {
-            'Authorization': f'Bearer {self.sarvam_api_key}',
-            'Content-Type': 'application/json'
-        }
+        if source_lang == target_lang and source_lang != "auto":
+            return text
 
-        response = requests.post('https://api.sarvam.ai/v1/translate', headers=headers, json={'text': text, 'target_language': target_lang})
-        return response.json().get('translated_text', text)
-    
-    def extract_entities(self, text: str) -> dict:
-        """Extract named entities from text"""
-        doc = self.nlp(text)
-        entities = [(ent.text, ent.label_) for ent in doc.ents]
-        return {'entities': entities, 'tokens': [token.text for token in doc]}
+        try:
+            print(f"--- Calling Sarvam Translate SDK ---")
+            print(f"Input: '{text[:50]}...', Source: {source_lang}, Target: {target_lang}")
 
+            response = self.client.text.translate(
+                input=text,
+                source_language_code=source_lang,
+                target_language_code=target_lang,
+            )
+            
+            print(f"Sarvam Translate SDK Response: {response}")
+            
+            return response.translated_text
+
+        except Exception as e:
+            print(f"ERROR in Sarvam SDK for translation: {e}")
+            return text
