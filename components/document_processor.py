@@ -8,7 +8,8 @@ import chromadb
 class DocumentProcessor:
     def __init__(self):
         self.text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-        self.embedding_model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-mpnet-base-v2')
+        # --- CHANGE 1: UPDATE THE MODEL NAME ---
+        self.embedding_model = SentenceTransformer('intfloat/multilingual-e5-base')
         self.chroma_client = chromadb.Client()
         self.collection = self.chroma_client.get_or_create_collection("multilingual_documents")
 
@@ -36,11 +37,15 @@ class DocumentProcessor:
                 if not isinstance(value, (str, int, float, bool)):
                     metadata[key] = str(value)
 
+            # --- CHANGE 2: ADD THE 'passage: ' PREFIX FOR E5 MODELS ---
+            # This is crucial for getting high-quality document embeddings.
+            text_to_embed = f"passage: {chunk.page_content}"
+
             doc_data = {
                 'id': f"{os.path.basename(file_path)}_{i}",
                 'content': chunk.page_content,
                 'metadata': metadata,
-                'embedding': self.embedding_model.encode(chunk.page_content)
+                'embedding': self.embedding_model.encode(text_to_embed)
             }
             documents.append(doc_data)
 
